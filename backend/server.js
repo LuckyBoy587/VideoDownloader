@@ -12,7 +12,7 @@ const PORT = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static(path.join(__dirname, '../frontend/dist')));
+// app.use(express.static(path.join(__dirname, '../frontend/dist')));
 
 // Resolve platform-specific downloads directory
 const downloadsDir = path.join(__dirname, 'temp_downloads');
@@ -22,6 +22,17 @@ if (!fs.existsSync(downloadsDir)) {
     fs.mkdirSync(downloadsDir, { recursive: true });
 }
 console.log(`Temporary download directory set to: ${downloadsDir}`);
+
+app.get("/", (req, res) => {
+    // Get all the mp4 files in the downloads directory
+    fs.readdir(downloadsDir, (err, files) => {
+        if (err) {
+            return res.status(500).send('Error reading downloads directory');
+        }
+        const mp4Files = files.filter(file => file.endsWith('.mp4'));
+        res.json(mp4Files);
+    });
+});
 
 // Serve downloaded file and delete after sending
 app.get('/file/:fileId', (req, res) => {

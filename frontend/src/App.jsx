@@ -20,7 +20,7 @@ function App() {
     setProgress(0)
 
     try {
-      const response = await fetch('https://videodownloader-lgeo.onrender.com/download', {
+      const response = await fetch('/download', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
