@@ -1,13 +1,13 @@
 const express = require('express');
 const cors = require('cors');
 const path = require('path');
-const YTDlpWrap = require('yt-dlp-wrap').default;
-const ffmpegPath = require('ffmpeg-static');
+const ytdlp = require('yt-dlp-exec');
+
 const fs = require('fs');
 const os = require('os');
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -41,36 +41,9 @@ try {
     console.log(`Falling back to local directory: ${downloadsDir}`);
 }
 
-// Determine yt-dlp binary path based on platform
-const platform = os.platform();
-let ytDlpBinaryPath = path.join(__dirname, 'yt-dlp');
-if (platform === 'win32') {
-    ytDlpBinaryPath += '.exe';
-}
 
-// Initialize yt-dlp and download binary if needed
-let ytDlpWrap;
-async function initializeYtDlp() {
-    try {
-        // Check if binary exists
-        if (!fs.existsSync(ytDlpBinaryPath)) {
-            console.log('yt-dlp binary not found. Downloading...');
-            await YTDlpWrap.downloadFromGithub(ytDlpBinaryPath, undefined, platform);
-            console.log('yt-dlp binary downloaded successfully.');
-        } else {
-            console.log('yt-dlp binary found.');
-        }
-        
-        // Initialize with binary path
-        ytDlpWrap = new YTDlpWrap(ytDlpBinaryPath);
-        console.log('yt-dlp initialized successfully.');
-    } catch (error) {
-        console.error('Error initializing yt-dlp:', error);
-        // Fallback to default (will try to use 'yt-dlp' command)
-        ytDlpWrap = new YTDlpWrap();
-        console.log('Using default yt-dlp command (may require manual installation).');
-    }
-}
+
+
 
 // Download endpoint
 app.post('/download', async (req, res) => {
@@ -80,43 +53,45 @@ app.post('/download', async (req, res) => {
         return res.status(400).json({ error: 'Video URL is required' });
     }
 
-    if (!ytDlpWrap) {
-        return res.status(503).json({ error: 'yt-dlp is not initialized yet. Please wait a moment and try again.' });
-    }
-
     try {
-        // Download video in highest quality
-        // Format: bestvideo+bestaudio/best (best quality video + audio, or best single file)
         const videoPath = path.join(downloadsDir, '%(title)s.%(ext)s');
         
-        // Set headers for streaming response
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Transfer-Encoding', 'chunked');
 
-        const ytDlpEventEmitter = ytDlpWrap.exec([
-            url,
-            '-f', 'bestvideo+bestaudio/best', // Best quality format
-            '-o', videoPath,
-            '--merge-output-format', 'mp4', // Merge into mp4
-            '--ffmpeg-location', ffmpegPath
-        ]);
-
-        ytDlpEventEmitter.on('progress', (progress) => {
-            console.log('Download progress:', progress);
-            res.write(JSON.stringify({ type: 'progress', percent: progress.percent, eta: progress.eta }) + '\n');
+        const subprocess = ytdlp.exec(url, {
+            output: videoPath,
+            format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
+            mergeOutputFormat: 'mp4',
+            ffmpegLocation: require('ffmpeg-static')
         });
 
-        ytDlpEventEmitter.on('ytDlpEvent', (eventType, eventData) => {
-            console.log('yt-dlp event:', eventType, eventData);
+        subprocess.stdout.on('data', (data) => {
+            const str = data.toString();
+            // console.log('stdout:', str); // Debugging
+
+            // Extract progress percentage
+            // [download]  15.0% of ...
+            const match = str.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
+            if (match) {
+                const percent = parseFloat(match[1]);
+                // Basic ETA extraction could be added if regex is more complex
+                res.write(JSON.stringify({ type: 'progress', percent, eta: '?' }) + '\n');
+            }
         });
 
-        ytDlpEventEmitter.on('error', (error) => {
+        subprocess.stderr.on('data', (data) => {
+            // yt-dlp sometimes outputs errors or info to stderr
+            console.log('stderr:', data.toString());
+        });
+
+        subprocess.on('error', (error) => {
             console.error('Download error:', error);
             res.write(JSON.stringify({ type: 'error', message: error.message }) + '\n');
             res.end();
         });
 
-        ytDlpEventEmitter.on('close', (code) => {
+        subprocess.on('close', (code) => {
             if (code === 0) {
                 res.write(JSON.stringify({ 
                     type: 'success', 
@@ -152,7 +127,13 @@ app.get('/info', async (req, res) => {
     }
 
     try {
-        const info = await ytDlpWrap.getVideoInfo(url);
+        const info = await ytdlp(url, {
+            dumpSingleJson: true,
+            noWarnings: true,
+            noCallHome: true,
+            preferFreeFormats: true,
+            youtubeSkipDashManifest: true
+        });
         res.json(info);
     } catch (error) {
         console.error('Error getting video info:', error);
@@ -161,12 +142,7 @@ app.get('/info', async (req, res) => {
 });
 
 // Start server after initializing yt-dlp
-initializeYtDlp().then(() => {
-    app.listen(PORT, () => {
-        console.log(`Server running on http://localhost:${PORT}`);
-    });
-}).catch((error) => {
-    console.error('Failed to initialize server:', error);
-    process.exit(1);
+app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
 });
 
