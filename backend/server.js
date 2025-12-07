@@ -15,35 +15,35 @@ app.use(express.json());
 app.use(express.static(path.join(__dirname, '../frontend/dist')));
 
 // Resolve platform-specific downloads directory
-function getDownloadsDirectory() {
-    const platform = os.platform();
-    if (platform === 'android' || process.env.ANDROID_ROOT || process.env.ANDROID_DATA) {
-        return '/storage/emulated/0/Download';
-    }
-    return path.join(os.homedir(), 'Downloads');
+const downloadsDir = path.join(__dirname, 'temp_downloads');
+
+// Ensure directory exists
+if (!fs.existsSync(downloadsDir)) {
+    fs.mkdirSync(downloadsDir, { recursive: true });
 }
+console.log(`Temporary download directory set to: ${downloadsDir}`);
 
-let downloadsDir = getDownloadsDirectory();
+// Serve downloaded file and delete after sending
+app.get('/file/:fileId', (req, res) => {
+    const { fileId } = req.params;
+    const { filename } = req.query;
+    const filePath = path.join(downloadsDir, `${fileId}.mp4`);
 
-// Ensure directory exists and is writable
-try {
-    if (!fs.existsSync(downloadsDir)) {
-        fs.mkdirSync(downloadsDir, { recursive: true });
+    if (!fs.existsSync(filePath)) {
+        return res.status(404).send('File not found or expired');
     }
-    fs.accessSync(downloadsDir, fs.constants.W_OK);
-    console.log(`Download directory set to: ${downloadsDir}`);
-} catch (error) {
-    console.warn(`Unable to access global Downloads folder (${downloadsDir}): ${error.message}`);
-    downloadsDir = path.join(__dirname, 'downloads');
-    if (!fs.existsSync(downloadsDir)) {
-        fs.mkdirSync(downloadsDir);
-    }
-    console.log(`Falling back to local directory: ${downloadsDir}`);
-}
 
-
-
-
+    res.download(filePath, filename || 'video.mp4', (err) => {
+        if (err) {
+            console.error('Error sending file:', err);
+        }
+        // Delete file after download (or attempted download)
+        fs.unlink(filePath, (unlinkErr) => {
+            if (unlinkErr) console.error('Error deleting temp file:', unlinkErr);
+            else console.log(`Cleaned up temp file: ${fileId}`);
+        });
+    });
+});
 
 // Download endpoint
 app.post('/download', async (req, res) => {
@@ -53,14 +53,32 @@ app.post('/download', async (req, res) => {
         return res.status(400).json({ error: 'Video URL is required' });
     }
 
+    const fileId = Date.now().toString();
+    const tempFilePath = path.join(downloadsDir, `${fileId}.mp4`);
+
     try {
-        const videoPath = path.join(downloadsDir, '%(title)s.%(ext)s');
-        
         res.setHeader('Content-Type', 'text/plain');
         res.setHeader('Transfer-Encoding', 'chunked');
 
+        // 1. Get video info first to get the title
+        res.write(JSON.stringify({ type: 'progress', percent: 0, eta: 'Fetching info...' }) + '\n');
+        
+        let videoTitle = 'video';
+        try {
+            const info = await ytdlp(url, {
+                dumpSingleJson: true,
+                noWarnings: true,
+                noCallHome: true,
+                preferFreeFormats: true,
+            });
+            videoTitle = info.title.replace(/[^\w\s.-]/g, '_'); // Sanitize filename
+        } catch (e) {
+            console.warn('Failed to fetch metadata, using default name:', e.message);
+        }
+
+        // 2. Start Download
         const subprocess = ytdlp.exec(url, {
-            output: videoPath,
+            output: tempFilePath,
             format: 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
             mergeOutputFormat: 'mp4',
             ffmpegLocation: require('ffmpeg-static')
@@ -68,20 +86,14 @@ app.post('/download', async (req, res) => {
 
         subprocess.stdout.on('data', (data) => {
             const str = data.toString();
-            // console.log('stdout:', str); // Debugging
-
-            // Extract progress percentage
-            // [download]  15.0% of ...
             const match = str.match(/\[download\]\s+(\d+(?:\.\d+)?)%/);
             if (match) {
                 const percent = parseFloat(match[1]);
-                // Basic ETA extraction could be added if regex is more complex
-                res.write(JSON.stringify({ type: 'progress', percent, eta: '?' }) + '\n');
+                res.write(JSON.stringify({ type: 'progress', percent, eta: 'Downloading...' }) + '\n');
             }
         });
 
         subprocess.stderr.on('data', (data) => {
-            // yt-dlp sometimes outputs errors or info to stderr
             console.log('stderr:', data.toString());
         });
 
@@ -95,8 +107,8 @@ app.post('/download', async (req, res) => {
             if (code === 0) {
                 res.write(JSON.stringify({ 
                     type: 'success', 
-                    message: 'Video downloaded successfully',
-                    path: downloadsDir
+                    message: 'Download ready',
+                    downloadUrl: `/file/${fileId}?filename=${encodeURIComponent(videoTitle)}.mp4`
                 }) + '\n');
             } else {
                 res.write(JSON.stringify({ 

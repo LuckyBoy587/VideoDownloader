@@ -20,7 +20,7 @@ function App() {
     setProgress(0)
 
     try {
-      const response = await fetch('/download', {
+      const response = await fetch('https://videodownloader-lgeo.onrender.com/download', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -48,9 +48,19 @@ function App() {
               const eta = data.eta ? data.eta : 'Calculating...'
               setStatus(`Downloading: ${data.percent}% (ETA: ${eta})`)
             } else if (data.type === 'success') {
-              setStatus(`Success! Video downloaded to: ${data.path}`)
+              setStatus('Download ready! Starting file transfer...')
               setStatusColor('text-green-500')
               setProgress(100)
+
+              if (data.downloadUrl) {
+                const BASE_URL = 'https://videodownloader-lgeo.onrender.com'
+                const link = document.createElement('a')
+                link.href = BASE_URL + data.downloadUrl
+                link.setAttribute('download', '')
+                document.body.appendChild(link)
+                link.click()
+                document.body.removeChild(link)
+              }
             } else if (data.type === 'error') {
               setStatus(`Error: ${data.message}`)
               setStatusColor('text-red-500')
