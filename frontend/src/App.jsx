@@ -5,6 +5,7 @@ function App() {
   const [status, setStatus] = useState('')
   const [statusColor, setStatusColor] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [progress, setProgress] = useState(0)
 
   const handleDownload = async () => {
     if (!url.trim()) {
@@ -14,8 +15,9 @@ function App() {
     }
 
     setIsLoading(true)
-    setStatus('Downloading video in highest quality...')
+    setStatus('Starting download...')
     setStatusColor('text-blue-500')
+    setProgress(0)
 
     try {
       const response = await fetch('/download', {
@@ -26,15 +28,39 @@ function App() {
         body: JSON.stringify({ url: url.trim() })
       })
 
-      const data = await response.json()
+      const reader = response.body.getReader()
+      const decoder = new TextDecoder()
 
-      if (response.ok) {
-        setStatus(`Success! Video downloaded to: ${data.path || 'server downloads folder'}`)
-        setStatusColor('text-green-500')
-      } else {
-        setStatus(`Error: ${data.error || 'Download failed'}`)
-        setStatusColor('text-red-500')
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        
+        const chunk = decoder.decode(value, { stream: true })
+        const lines = chunk.split('\n').filter(line => line.trim() !== '')
+        
+        for (const line of lines) {
+          try {
+            const data = JSON.parse(line)
+            
+            if (data.type === 'progress') {
+              const percent = parseFloat(data.percent)
+              setProgress(percent)
+              const eta = data.eta ? data.eta : 'Calculating...'
+              setStatus(`Downloading: ${data.percent}% (ETA: ${eta})`)
+            } else if (data.type === 'success') {
+              setStatus(`Success! Video downloaded to: ${data.path}`)
+              setStatusColor('text-green-500')
+              setProgress(100)
+            } else if (data.type === 'error') {
+              setStatus(`Error: ${data.message}`)
+              setStatusColor('text-red-500')
+            }
+          } catch (e) {
+            console.error('Error parsing JSON chunk', e)
+          }
+        }
       }
+
     } catch (error) {
       setStatus(`Error: ${error.message}. Make sure the server is running.`)
       setStatusColor('text-red-500')
@@ -75,6 +101,15 @@ function App() {
           >
             {isLoading ? 'Downloading...' : 'Download'}
           </button>
+
+          {isLoading && (
+            <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700 mt-4">
+              <div 
+                className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out" 
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+          )}
 
           {status && (
             <div className={`mt-4 p-3 rounded-md bg-gray-50 text-sm ${statusColor}`}>

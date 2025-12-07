@@ -12,7 +12,7 @@ const PORT = 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('dist'));
+app.use(express.static(path.join(__dirname, '../frontend/dist')));
 
 // Resolve platform-specific downloads directory
 function getDownloadsDirectory() {
@@ -89,6 +89,10 @@ app.post('/download', async (req, res) => {
         // Format: bestvideo+bestaudio/best (best quality video + audio, or best single file)
         const videoPath = path.join(downloadsDir, '%(title)s.%(ext)s');
         
+        // Set headers for streaming response
+        res.setHeader('Content-Type', 'text/plain');
+        res.setHeader('Transfer-Encoding', 'chunked');
+
         const ytDlpEventEmitter = ytDlpWrap.exec([
             url,
             '-f', 'bestvideo+bestaudio/best', // Best quality format
@@ -98,37 +102,44 @@ app.post('/download', async (req, res) => {
         ]);
 
         ytDlpEventEmitter.on('progress', (progress) => {
-            console.log('Download progress:', progress.percent + '%', progress.eta);
+            console.log('Download progress:', progress);
+            res.write(JSON.stringify({ type: 'progress', percent: progress.percent, eta: progress.eta }) + '\n');
         });
 
         ytDlpEventEmitter.on('ytDlpEvent', (eventType, eventData) => {
-            console.log('Event:', eventType, eventData);
+            console.log('yt-dlp event:', eventType, eventData);
         });
 
         ytDlpEventEmitter.on('error', (error) => {
             console.error('Download error:', error);
-            res.status(500).json({ error: 'Download failed', details: error.message });
+            res.write(JSON.stringify({ type: 'error', message: error.message }) + '\n');
+            res.end();
         });
 
         ytDlpEventEmitter.on('close', (code) => {
             if (code === 0) {
-                res.json({ 
-                    success: true, 
+                res.write(JSON.stringify({ 
+                    type: 'success', 
                     message: 'Video downloaded successfully',
                     path: downloadsDir
-                });
+                }) + '\n');
             } else {
-                res.status(500).json({ 
-                    error: 'Download failed', 
-                    details: 'Download process exited with code: ' + code,
-                    code: code
-                });
+                res.write(JSON.stringify({ 
+                    type: 'error', 
+                    message: 'Download process exited with code: ' + code
+                }) + '\n');
             }
+            res.end();
         });
 
     } catch (error) {
         console.error('Error:', error);
-        res.status(500).json({ error: 'Server error', details: error.message });
+        if (!res.headersSent) {
+            res.status(500).json({ error: 'Server error', details: error.message });
+        } else {
+            res.write(JSON.stringify({ type: 'error', message: error.message }) + '\n');
+            res.end();
+        }
     }
 });
 
