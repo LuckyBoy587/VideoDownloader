@@ -7,7 +7,8 @@ const fs = require('fs');
 const os = require('os');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
+const IP_ADDRESS = '0.0.0.0';
 
 // Middleware
 app.use(cors());
@@ -63,7 +64,7 @@ app.post('/download', async (req, res) => {
     if (!url) {
         return res.status(400).json({ error: 'Video URL is required' });
     }
-
+    console.log(`Received download request for URL: ${url}`);
     const fileId = Date.now().toString();
     const tempFilePath = path.join(downloadsDir, `${fileId}.mp4`);
 
@@ -119,7 +120,8 @@ app.post('/download', async (req, res) => {
                 res.write(JSON.stringify({ 
                     type: 'success', 
                     message: 'Download ready',
-                    downloadUrl: `/file/${fileId}?filename=${encodeURIComponent(videoTitle)}.mp4`
+                    downloadUrl: `/file/${fileId}?filename=${encodeURIComponent(videoTitle)}.mp4`,
+                    filename: `${videoTitle}.mp4`
                 }) + '\n');
             } else {
                 res.write(JSON.stringify({ 
@@ -165,7 +167,7 @@ app.get('/info', async (req, res) => {
 });
 
 // Start server after initializing yt-dlp
-app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+app.listen(PORT, IP_ADDRESS, () => {
+    console.log(`Server running on http://${IP_ADDRESS}:${PORT}`);
 });
 

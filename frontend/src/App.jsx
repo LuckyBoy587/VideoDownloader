@@ -7,6 +7,8 @@ function App() {
   const [isLoading, setIsLoading] = useState(false)
   const [progress, setProgress] = useState(0)
 
+  const BACKEND_URL = 'http://192.168.1.36:5000'
+
   const handleDownload = async () => {
     if (!url.trim()) {
       setStatus('Please enter a video URL')
@@ -19,8 +21,9 @@ function App() {
     setStatusColor('text-blue-500')
     setProgress(0)
 
+
     try {
-      const response = await fetch('/download', {
+      const response = await fetch(BACKEND_URL + '/download', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -53,13 +56,8 @@ function App() {
               setProgress(100)
 
               if (data.downloadUrl) {
-                const BASE_URL = 'https://videodownloader-lgeo.onrender.com'
-                const link = document.createElement('a')
-                link.href = BASE_URL + data.downloadUrl
-                link.setAttribute('download', '')
-                document.body.appendChild(link)
-                link.click()
-                document.body.removeChild(link)
+                console.log('Download URL:', BACKEND_URL + data.downloadUrl)
+                window.open(BACKEND_URL + data.downloadUrl, '_blank');
               }
             } else if (data.type === 'error') {
               setStatus(`Error: ${data.message}`)
